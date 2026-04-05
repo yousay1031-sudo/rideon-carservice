@@ -1,0 +1,11 @@
+name = "rideon-carwash-api"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+SUPABASE_URL = ""  # wrangler secret put SUPABASE_URL で設定
+
+# シークレットは wrangler secret put で設定（コードに書かない）
+# SUPABASE_SERVICE_ROLE_KEY
+# LINE_CHANNEL_ACCESS_TOKEN（フェーズ2）
