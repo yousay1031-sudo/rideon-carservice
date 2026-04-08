@@ -19,10 +19,16 @@ app.use('/api/*', cors({
   allowHeaders: ['Content-Type', 'Authorization'],
 }))
 
-// ヘルスチェック
 app.get('/', c => c.json({ ok: true, service: 'RIDE ON!! Carwash API' }))
 
-// ルート
+app.get('/debug', async (c) => {
+  const { createDb } = await import('./lib/supabase')
+  const sql = createDb(c.env)
+  const result = await sql`SELECT name FROM carwash.stores LIMIT 5`
+  await sql.end()
+  return c.json({ stores: result })
+})
+
 app.route('/api/customers',    customers)
 app.route('/api/vehicles',     vehicles)
 app.route('/api/reservations', reservations)
@@ -30,10 +36,8 @@ app.route('/api/checkout',     checkout)
 app.route('/api/report',       report)
 app.route('/api/master',       master)
 
-// 404
 app.notFound(c => c.json({ error: 'Not Found' }, 404))
 
-// エラーハンドラー
 app.onError((err, c) => {
   console.error(err)
   return c.json({ error: err.message }, 500)

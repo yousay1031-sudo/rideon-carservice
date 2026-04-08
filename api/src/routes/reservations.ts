@@ -1,114 +1,126 @@
 import { Hono } from 'hono'
-import { createSupabase, type Bindings } from '../lib/supabase'
+import { createDb, type Bindings } from '../lib/supabase'
 
 const reservations = new Hono<{ Bindings: Bindings }>()
 
-// 予約一覧（日付・店舗で絞り込み）
 reservations.get('/', async (c) => {
-  const db = createSupabase(c.env)
-  const { date, store_id, status } = c.req.query()
-
-  const params: Record<string, string> = {
-    select: [
-      'id,store_id,reservation_date,start_time,end_time,work_lane',
-      'customer_id,customer_name,customer_phone',
-      'vehicle_id,car_number,car_size',
-      'staff_id,dealer_name,status,notes',
-      'total_price,payment_method,paid_at',
-      'booked_via_line',
-      // 顧客・車両をJOIN（Supabase PostgREST記法）
-      'customers(name,furigana,phone)',
-      'vehicles(car_maker,car_model,car_number,car_size)',
-      'staff_members(name)',
-      // 明細
-      'reservation_items(id,item_type,service_name,tire_service_type,tire_size,tire_unit_type,oil_grade,oil_volume_l,custom_name,is_custom,subtotal)',
-    ].join(','),
-    order: 'start_time.asc',
-  }
-  if (date)     params['reservation_date'] = `eq.${date}`
-  if (store_id) params['store_id']         = `eq.${store_id}`
-  if (status)   params['status']           = `eq.${status}`
-
-  const { data, error } = await db.query('reservations', params)
-  if (error) return c.json({ error }, 500)
-  return c.json(data)
+  const sql = createDb(c.env)
+  try {
+    const { date, store_id, status } = c.req.query()
+    let data
+    if (date && store_id) {
+      data = await sql`
+        SELECT r.*,
+          c.name AS customer_name_ref, c.furigana, c.phone AS customer_phone_ref,
+          v.car_maker, v.car_model,
+          s.name AS staff_name,
+          json_agg(ri.*) FILTER (WHERE ri.id IS NOT NULL) AS items
+        FROM carwash.reservations r
+        LEFT JOIN carwash.customers c ON c.id = r.customer_id
+        LEFT JOIN carwash.vehicles v ON v.id = r.vehicle_id
+        LEFT JOIN carwash.staff_members s ON s.id = r.staff_id
+        LEFT JOIN carwash.reservation_items ri ON ri.reservation_id = r.id
+        WHERE r.reservation_date = ${date} AND r.store_id = ${store_id}
+        GROUP BY r.id, c.name, c.furigana, c.phone, v.car_maker, v.car_model, s.name
+        ORDER BY r.start_time`
+    } else if (date) {
+      data = await sql`
+        SELECT r.*,
+          c.name AS customer_name_ref, c.furigana, c.phone AS customer_phone_ref,
+          v.car_maker, v.car_model,
+          s.name AS staff_name,
+          json_agg(ri.*) FILTER (WHERE ri.id IS NOT NULL) AS items
+        FROM carwash.reservations r
+        LEFT JOIN carwash.customers c ON c.id = r.customer_id
+        LEFT JOIN carwash.vehicles v ON v.id = r.vehicle_id
+        LEFT JOIN carwash.staff_members s ON s.id = r.staff_id
+        LEFT JOIN carwash.reservation_items ri ON ri.reservation_id = r.id
+        WHERE r.reservation_date = ${date}
+        GROUP BY r.id, c.name, c.furigana, c.phone, v.car_maker, v.car_model, s.name
+        ORDER BY r.start_time`
+    } else {
+      data = await sql`SELECT * FROM carwash.reservations ORDER BY reservation_date DESC, start_time LIMIT 100`
+    }
+    return c.json(data)
+  } finally { await sql.end() }
 })
 
-// 予約詳細
 reservations.get('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const { data, error } = await db.single('reservations', {
-    id: `eq.${c.req.param('id')}`,
-    select: [
-      'id,store_id,reservation_date,start_time,end_time,work_lane',
-      'customer_id,customer_name,customer_phone',
-      'vehicle_id,car_number,car_size',
-      'staff_id,dealer_name,status,notes',
-      'total_price,payment_method,paid_at,booked_via_line',
-      'customers(id,name,furigana,phone)',
-      'vehicles(id,car_maker,car_model,car_number,car_size,inspection_date)',
-      'staff_members(name)',
-      'reservation_items(id,item_type,service_id,service_name,car_size,tire_menu_id,tire_service_type,tire_size,tire_unit_type,oil_grade_id,oil_grade,oil_volume_l,oil_work_price,is_custom,custom_name,unit_price,quantity,subtotal,notes)',
-    ].join(','),
-  })
-  if (!data) return c.json({ error: '予約が見つかりません' }, 404)
-  if (error) return c.json({ error }, 500)
-  return c.json(data)
+  const sql = createDb(c.env)
+  try {
+    const id = c.req.param('id')
+    const [reservation, items] = await Promise.all([
+      sql`
+        SELECT r.*,
+          c.name AS customer_name_ref, c.furigana, c.phone AS customer_phone_ref,
+          v.car_maker, v.car_model, v.car_number AS vehicle_car_number,
+          s.name AS staff_name
+        FROM carwash.reservations r
+        LEFT JOIN carwash.customers c ON c.id = r.customer_id
+        LEFT JOIN carwash.vehicles v ON v.id = r.vehicle_id
+        LEFT JOIN carwash.staff_members s ON s.id = r.staff_id
+        WHERE r.id = ${id}`,
+      sql`SELECT * FROM carwash.reservation_items WHERE reservation_id = ${id} ORDER BY id`,
+    ])
+    if (!reservation[0]) return c.json({ error: '予約が見つかりません' }, 404)
+    return c.json({ ...reservation[0], items })
+  } finally { await sql.end() }
 })
 
-// 予約登録（明細なし・枠だけ先に確保）
 reservations.post('/', async (c) => {
-  const db = createSupabase(c.env)
-  const body = await c.req.json()
-
-  const { data, error } = await db.insert('reservations', {
-    store_id:         body.store_id,
-    customer_id:      body.customer_id ?? null,
-    vehicle_id:       body.vehicle_id ?? null,
-    customer_name:    body.customer_name ?? null,
-    customer_phone:   body.customer_phone ?? null,
-    car_number:       body.car_number ?? null,
-    car_size:         body.car_size ?? 'M',
-    reservation_date: body.reservation_date,
-    start_time:       body.start_time,
-    end_time:         body.end_time ?? null,
-    work_lane:        body.work_lane ?? '洗車場',
-    staff_id:         body.staff_id ?? null,
-    dealer_name:      body.dealer_name ?? null,
-    status:           'confirmed',
-    notes:            body.notes ?? null,
-    booked_via_line:  body.booked_via_line ?? false,
-    line_user_id:     body.line_user_id ?? null,
-  })
-  if (error) return c.json({ error }, 500)
-  return c.json(data, 201)
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.reservations
+        (store_id, customer_id, vehicle_id, customer_name, customer_phone,
+         car_number, car_size, reservation_date, start_time, end_time,
+         work_lane, staff_id, dealer_name, status, notes, booked_via_line, line_user_id)
+      VALUES
+        (${body.store_id}, ${body.customer_id ?? null}, ${body.vehicle_id ?? null},
+         ${body.customer_name ?? null}, ${body.customer_phone ?? null},
+         ${body.car_number ?? null}, ${body.car_size ?? 'M'},
+         ${body.reservation_date}, ${body.start_time}, ${body.end_time ?? null},
+         ${body.work_lane ?? '洗車場'}, ${body.staff_id ?? null},
+         ${body.dealer_name ?? null}, 'confirmed', ${body.notes ?? null},
+         ${body.booked_via_line ?? false}, ${body.line_user_id ?? null})
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
 })
 
-// 予約更新（ステータス変更など）
 reservations.put('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const id = c.req.param('id')
-  const body = await c.req.json()
-
-  const updateFields: Record<string, unknown> = {}
-  const allowed = [
-    'customer_id','vehicle_id','customer_name','customer_phone',
-    'car_number','car_size','reservation_date','start_time','end_time',
-    'work_lane','staff_id','dealer_name','status','notes',
-  ]
-  allowed.forEach(k => { if (body[k] !== undefined) updateFields[k] = body[k] })
-
-  const { data, error } = await db.update('reservations', { id }, updateFields)
-  if (error) return c.json({ error }, 500)
-  return c.json(data)
+  const sql = createDb(c.env)
+  try {
+    const id = c.req.param('id')
+    const body = await c.req.json()
+    const data = await sql`
+      UPDATE carwash.reservations SET
+        customer_id = ${body.customer_id ?? null},
+        vehicle_id = ${body.vehicle_id ?? null},
+        customer_name = ${body.customer_name ?? null},
+        customer_phone = ${body.customer_phone ?? null},
+        car_number = ${body.car_number ?? null},
+        car_size = ${body.car_size ?? 'M'},
+        reservation_date = ${body.reservation_date},
+        start_time = ${body.start_time},
+        end_time = ${body.end_time ?? null},
+        work_lane = ${body.work_lane ?? '洗車場'},
+        staff_id = ${body.staff_id ?? null},
+        dealer_name = ${body.dealer_name ?? null},
+        status = ${body.status ?? 'confirmed'},
+        notes = ${body.notes ?? null}
+      WHERE id = ${id} RETURNING *`
+    return c.json(data[0])
+  } finally { await sql.end() }
 })
 
-// 予約削除
 reservations.delete('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const { error } = await db.remove('reservations', { id: c.req.param('id') })
-  if (error) return c.json({ error }, 500)
-  return c.json({ ok: true })
+  const sql = createDb(c.env)
+  try {
+    await sql`DELETE FROM carwash.reservations WHERE id = ${c.req.param('id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
 })
 
 export default reservations

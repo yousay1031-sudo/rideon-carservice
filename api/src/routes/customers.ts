@@ -1,97 +1,79 @@
 import { Hono } from 'hono'
-import { createSupabase, type Bindings } from '../lib/supabase'
+import { createDb, type Bindings } from '../lib/supabase'
 
 const customers = new Hono<{ Bindings: Bindings }>()
 
-// 顧客一覧（検索・店舗フィルタ対応）
 customers.get('/', async (c) => {
-  const db = createSupabase(c.env)
-  const { q, store_id, group } = c.req.query()
-
-  const params: Record<string, string> = {
-    select: 'id,name,furigana,phone,email,customer_group,primary_store_id,line_user_id,notes,created_at',
-    order: 'furigana.asc,name.asc',
-    limit: '200',
-  }
-  if (store_id) params['primary_store_id'] = `eq.${store_id}`
-  if (group)    params['customer_group']   = `eq.${group}`
-  if (q) {
-    // 名前・ふりがな・電話番号で部分一致
-    params['or'] = `name.ilike.*${q}*,furigana.ilike.*${q}*,phone.ilike.*${q}*`
-  }
-
-  const { data, error } = await db.query('customers', params)
-  if (error) return c.json({ error }, 500)
-  return c.json(data)
+  const sql = createDb(c.env)
+  try {
+    const { q, store_id, group } = c.req.query()
+    let data
+    if (q) {
+      data = await sql`
+        SELECT * FROM carwash.customers
+        WHERE name ILIKE ${'%' + q + '%'}
+           OR furigana ILIKE ${'%' + q + '%'}
+           OR phone ILIKE ${'%' + q + '%'}
+        ORDER BY furigana, name LIMIT 200`
+    } else if (store_id && group) {
+      data = await sql`SELECT * FROM carwash.customers WHERE primary_store_id = ${store_id} AND customer_group = ${group} ORDER BY furigana, name LIMIT 200`
+    } else if (store_id) {
+      data = await sql`SELECT * FROM carwash.customers WHERE primary_store_id = ${store_id} ORDER BY furigana, name LIMIT 200`
+    } else {
+      data = await sql`SELECT * FROM carwash.customers ORDER BY furigana, name LIMIT 200`
+    }
+    return c.json(data)
+  } finally { await sql.end() }
 })
 
-// 顧客詳細（車両・洗車履歴込み）
 customers.get('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const id = c.req.param('id')
-
-  const [customerRes, vehiclesRes] = await Promise.all([
-    db.single('customers', { id: `eq.${id}` }),
-    db.query('vehicles', {
-      customer_id: `eq.${id}`,
-      order: 'created_at.desc',
-      select: 'id,car_number,car_maker,car_model,car_color,car_year,car_size,inspection_date,image_url,notes',
-    }),
-  ])
-
-  if (!customerRes.data) return c.json({ error: '顧客が見つかりません' }, 404)
-
-  return c.json({
-    ...customerRes.data,
-    vehicles: vehiclesRes.data,
-  })
+  const sql = createDb(c.env)
+  try {
+    const id = c.req.param('id')
+    const [customer, vehicles] = await Promise.all([
+      sql`SELECT * FROM carwash.customers WHERE id = ${id}`,
+      sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${id} ORDER BY created_at DESC`,
+    ])
+    if (!customer[0]) return c.json({ error: '顧客が見つかりません' }, 404)
+    return c.json({ ...customer[0], vehicles })
+  } finally { await sql.end() }
 })
 
-// 顧客登録
 customers.post('/', async (c) => {
-  const db = createSupabase(c.env)
-  const body = await c.req.json()
-
-  const { data, error } = await db.insert('customers', {
-    name:             body.name,
-    furigana:         body.furigana ?? null,
-    phone:            body.phone ?? null,
-    email:            body.email ?? null,
-    address:          body.address ?? null,
-    customer_group:   body.customer_group ?? 'general',
-    primary_store_id: body.primary_store_id ?? 1,
-    notes:            body.notes ?? null,
-  })
-  if (error) return c.json({ error }, 500)
-  return c.json(data, 201)
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.customers (name, furigana, phone, email, address, customer_group, primary_store_id, notes)
+      VALUES (${body.name}, ${body.furigana ?? null}, ${body.phone ?? null}, ${body.email ?? null},
+              ${body.address ?? null}, ${body.customer_group ?? 'general'}, ${body.primary_store_id ?? 1}, ${body.notes ?? null})
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
 })
 
-// 顧客更新
 customers.put('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const id = c.req.param('id')
-  const body = await c.req.json()
-
-  const { data, error } = await db.update('customers', { id }, {
-    name:             body.name,
-    furigana:         body.furigana ?? null,
-    phone:            body.phone ?? null,
-    email:            body.email ?? null,
-    address:          body.address ?? null,
-    customer_group:   body.customer_group,
-    primary_store_id: body.primary_store_id,
-    notes:            body.notes ?? null,
-  })
-  if (error) return c.json({ error }, 500)
-  return c.json(data)
+  const sql = createDb(c.env)
+  try {
+    const id = c.req.param('id')
+    const body = await c.req.json()
+    const data = await sql`
+      UPDATE carwash.customers SET
+        name = ${body.name}, furigana = ${body.furigana ?? null},
+        phone = ${body.phone ?? null}, email = ${body.email ?? null},
+        address = ${body.address ?? null}, customer_group = ${body.customer_group},
+        primary_store_id = ${body.primary_store_id}, notes = ${body.notes ?? null}
+      WHERE id = ${id} RETURNING *`
+    return c.json(data[0])
+  } finally { await sql.end() }
 })
 
-// 顧客削除
 customers.delete('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const { error } = await db.remove('customers', { id: c.req.param('id') })
-  if (error) return c.json({ error }, 500)
-  return c.json({ ok: true })
+  const sql = createDb(c.env)
+  try {
+    await sql`DELETE FROM carwash.customers WHERE id = ${c.req.param('id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
 })
 
 export default customers

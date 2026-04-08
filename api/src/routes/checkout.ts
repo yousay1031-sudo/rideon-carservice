@@ -1,154 +1,94 @@
 import { Hono } from 'hono'
-import { createSupabase, type Bindings } from '../lib/supabase'
+import { createDb, type Bindings } from '../lib/supabase'
 
 const checkout = new Hono<{ Bindings: Bindings }>()
 
-// ==================== 会計確定 ====================
-// 明細を受け取り → reservation_items に保存 → reservations を completed に更新
-// → wash_history に記録
-
 checkout.post('/:reservation_id/confirm', async (c) => {
-  const db = createSupabase(c.env)
-  const reservationId = c.req.param('reservation_id')
-  const body = await c.req.json()
+  const sql = createDb(c.env)
+  try {
+    const reservationId = c.req.param('reservation_id')
+    const { items, payment_method, total_price } = await c.req.json()
 
-  // body.items: 明細配列
-  // body.payment_method: cash / card / emoney
-  // body.total_price: 合計金額（フロント計算済み）
+    const reservation = await sql`SELECT * FROM carwash.reservations WHERE id = ${reservationId}`
+    if (!reservation[0]) return c.json({ error: '予約が見つかりません' }, 404)
 
-  const { items, payment_method, total_price } = body as {
-    items: CheckoutItem[]
-    payment_method: string
-    total_price: number
-  }
+    await sql`DELETE FROM carwash.reservation_items WHERE reservation_id = ${reservationId}`
 
-  // 1. 予約情報を取得（wash_history 記録用）
-  const { data: reservation } = await db.single<Reservation>('reservations', {
-    id: `eq.${reservationId}`,
-    select: 'id,vehicle_id,car_size,customer_id',
-  })
-  if (!reservation) return c.json({ error: '予約が見つかりません' }, 404)
+    for (const item of items) {
+      await sql`
+        INSERT INTO carwash.reservation_items
+          (reservation_id, item_type, service_id, service_name, car_size,
+           tire_menu_id, tire_service_type, tire_size, tire_unit_type,
+           oil_grade_id, oil_grade, oil_volume_l, oil_work_price,
+           is_custom, custom_name, unit_price, quantity, subtotal, notes)
+        VALUES
+          (${reservationId}, ${item.item_type},
+           ${item.service_id ?? null}, ${item.service_name ?? null}, ${item.car_size ?? null},
+           ${item.tire_menu_id ?? null}, ${item.tire_service_type ?? null},
+           ${item.tire_size ?? null}, ${item.tire_unit_type ?? null},
+           ${item.oil_grade_id ?? null}, ${item.oil_grade ?? null},
+           ${item.oil_volume_l ?? null}, ${item.oil_work_price ?? null},
+           ${item.is_custom ?? false}, ${item.custom_name ?? null},
+           ${item.unit_price}, ${item.quantity ?? 1}, ${item.subtotal}, ${item.notes ?? null})`
+    }
 
-  // 2. 既存の明細を削除（再会計に対応）
-  await db.remove('reservation_items', { reservation_id: reservationId })
+    await sql`
+      UPDATE carwash.reservations SET
+        status = 'completed',
+        total_price = ${total_price},
+        payment_method = ${payment_method},
+        paid_at = NOW()
+      WHERE id = ${reservationId}`
 
-  // 3. 明細を登録
-  const itemErrors: string[] = []
-  for (const item of items) {
-    const { error } = await db.insert('reservation_items', buildItemPayload(reservationId, item))
-    if (error) itemErrors.push(error)
-  }
-  if (itemErrors.length > 0) return c.json({ error: itemErrors.join(', ') }, 500)
+    const r = reservation[0]
+    if (r.vehicle_id) {
+      const serviceNames = items.map((i: any) => {
+        if (i.item_type === 'tire') return 'タイヤ交換'
+        if (i.item_type === 'oil') return 'オイル交換'
+        if (i.is_custom) return i.custom_name
+        return i.service_name
+      }).filter(Boolean).join('・')
 
-  // 4. 予約を completed に更新
-  const { error: resErr } = await db.update('reservations', { id: reservationId }, {
-    status:         'completed',
-    total_price,
-    payment_method,
-    paid_at:        new Date().toISOString(),
-  })
-  if (resErr) return c.json({ error: resErr }, 500)
+      await sql`
+        INSERT INTO carwash.wash_history (vehicle_id, reservation_id, service_name, car_size, price)
+        VALUES (${r.vehicle_id}, ${reservationId}, ${serviceNames}, ${r.car_size ?? 'M'}, ${total_price})`
+    }
 
-  // 5. 洗車履歴に記録（vehicle_id がある場合のみ）
-  if (reservation.vehicle_id) {
-    const mainItem = items.find(i => i.item_type === 'service') ?? items[0]
-    await db.insert('wash_history', {
-      vehicle_id:     reservation.vehicle_id,
-      reservation_id: Number(reservationId),
-      service_name:   summarizeItems(items),
-      car_size:       reservation.car_size ?? 'M',
-      price:          total_price,
-    })
-  }
-
-  return c.json({ ok: true, total_price, payment_method })
+    return c.json({ ok: true, total_price, payment_method })
+  } finally { await sql.end() }
 })
 
-// ==================== 明細の追加・削除（会計前の編集用）====================
-
 checkout.post('/:reservation_id/items', async (c) => {
-  const db = createSupabase(c.env)
-  const reservationId = c.req.param('reservation_id')
-  const item = await c.req.json() as CheckoutItem
-
-  const { data, error } = await db.insert('reservation_items', buildItemPayload(reservationId, item))
-  if (error) return c.json({ error }, 500)
-  return c.json(data, 201)
+  const sql = createDb(c.env)
+  try {
+    const reservationId = c.req.param('reservation_id')
+    const item = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.reservation_items
+        (reservation_id, item_type, service_id, service_name, car_size,
+         tire_menu_id, tire_service_type, tire_size, tire_unit_type,
+         oil_grade_id, oil_grade, oil_volume_l, oil_work_price,
+         is_custom, custom_name, unit_price, quantity, subtotal, notes)
+      VALUES
+        (${reservationId}, ${item.item_type},
+         ${item.service_id ?? null}, ${item.service_name ?? null}, ${item.car_size ?? null},
+         ${item.tire_menu_id ?? null}, ${item.tire_service_type ?? null},
+         ${item.tire_size ?? null}, ${item.tire_unit_type ?? null},
+         ${item.oil_grade_id ?? null}, ${item.oil_grade ?? null},
+         ${item.oil_volume_l ?? null}, ${item.oil_work_price ?? null},
+         ${item.is_custom ?? false}, ${item.custom_name ?? null},
+         ${item.unit_price}, ${item.quantity ?? 1}, ${item.subtotal}, ${item.notes ?? null})
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
 })
 
 checkout.delete('/:reservation_id/items/:item_id', async (c) => {
-  const db = createSupabase(c.env)
-  const { error } = await db.remove('reservation_items', { id: c.req.param('item_id') })
-  if (error) return c.json({ error }, 500)
-  return c.json({ ok: true })
+  const sql = createDb(c.env)
+  try {
+    await sql`DELETE FROM carwash.reservation_items WHERE id = ${c.req.param('item_id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
 })
-
-// ==================== 型・ユーティリティ ====================
-
-type CheckoutItem = {
-  item_type: 'service' | 'tire' | 'oil' | 'other'
-  // service
-  service_id?:   number
-  service_name?: string
-  car_size?:     string
-  // tire
-  tire_menu_id?:      number
-  tire_service_type?: string
-  tire_size?:         string
-  tire_unit_type?:    string
-  // oil
-  oil_grade_id?:   number
-  oil_grade?:      string
-  oil_volume_l?:   number
-  oil_work_price?: number
-  // custom
-  is_custom?:   boolean
-  custom_name?: string
-  // common
-  unit_price: number
-  quantity?:  number
-  subtotal:   number
-  notes?:     string
-}
-
-type Reservation = {
-  id: number
-  vehicle_id: number | null
-  car_size: string | null
-  customer_id: number | null
-}
-
-function buildItemPayload(reservationId: string, item: CheckoutItem) {
-  return {
-    reservation_id:    Number(reservationId),
-    item_type:         item.item_type,
-    service_id:        item.service_id        ?? null,
-    service_name:      item.service_name      ?? null,
-    car_size:          item.car_size          ?? null,
-    tire_menu_id:      item.tire_menu_id      ?? null,
-    tire_service_type: item.tire_service_type ?? null,
-    tire_size:         item.tire_size         ?? null,
-    tire_unit_type:    item.tire_unit_type    ?? null,
-    oil_grade_id:      item.oil_grade_id      ?? null,
-    oil_grade:         item.oil_grade         ?? null,
-    oil_volume_l:      item.oil_volume_l      ?? null,
-    oil_work_price:    item.oil_work_price     ?? null,
-    is_custom:         item.is_custom         ?? false,
-    custom_name:       item.custom_name       ?? null,
-    unit_price:        item.unit_price,
-    quantity:          item.quantity          ?? 1,
-    subtotal:          item.subtotal,
-    notes:             item.notes             ?? null,
-  }
-}
-
-function summarizeItems(items: CheckoutItem[]): string {
-  return items.map(i => {
-    if (i.item_type === 'tire') return `タイヤ${i.tire_service_type === 'exchange' ? '交換' : i.tire_service_type === 'replacement' ? '組換' : 'バランス'}`
-    if (i.item_type === 'oil')  return 'オイル交換'
-    if (i.is_custom)            return i.custom_name ?? 'その他'
-    return i.service_name ?? ''
-  }).filter(Boolean).join('・')
-}
 
 export default checkout

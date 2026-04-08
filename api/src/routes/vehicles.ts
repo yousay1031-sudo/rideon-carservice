@@ -1,93 +1,68 @@
 import { Hono } from 'hono'
-import { createSupabase, type Bindings } from '../lib/supabase'
+import { createDb, type Bindings } from '../lib/supabase'
 
 const vehicles = new Hono<{ Bindings: Bindings }>()
 
-// 車両一覧（顧客IDで絞り込み）
 vehicles.get('/', async (c) => {
-  const db = createSupabase(c.env)
-  const { customer_id } = c.req.query()
-
-  const params: Record<string, string> = {
-    select: 'id,customer_id,car_number,car_maker,car_model,car_color,car_year,car_size,inspection_date,image_url,notes',
-    order: 'created_at.desc',
-  }
-  if (customer_id) params['customer_id'] = `eq.${customer_id}`
-
-  const { data, error } = await db.query('vehicles', params)
-  if (error) return c.json({ error }, 500)
-  return c.json(data)
+  const sql = createDb(c.env)
+  try {
+    const { customer_id } = c.req.query()
+    const data = customer_id
+      ? await sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${customer_id} ORDER BY created_at DESC`
+      : await sql`SELECT * FROM carwash.vehicles ORDER BY created_at DESC`
+    return c.json(data)
+  } finally { await sql.end() }
 })
 
-// 車両詳細（洗車履歴込み）
 vehicles.get('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const id = c.req.param('id')
-
-  const [vehicleRes, historyRes] = await Promise.all([
-    db.single('vehicles', { id: `eq.${id}` }),
-    db.query('wash_history', {
-      vehicle_id: `eq.${id}`,
-      order: 'wash_date.desc',
-      limit: '50',
-      select: 'id,wash_date,service_name,car_size,price,staff_name,notes',
-    }),
-  ])
-
-  if (!vehicleRes.data) return c.json({ error: '車両が見つかりません' }, 404)
-
-  return c.json({
-    ...vehicleRes.data,
-    wash_history: historyRes.data,
-  })
+  const sql = createDb(c.env)
+  try {
+    const id = c.req.param('id')
+    const [vehicle, history] = await Promise.all([
+      sql`SELECT * FROM carwash.vehicles WHERE id = ${id}`,
+      sql`SELECT * FROM carwash.wash_history WHERE vehicle_id = ${id} ORDER BY wash_date DESC LIMIT 50`,
+    ])
+    if (!vehicle[0]) return c.json({ error: '車両が見つかりません' }, 404)
+    return c.json({ ...vehicle[0], wash_history: history })
+  } finally { await sql.end() }
 })
 
-// 車両登録
 vehicles.post('/', async (c) => {
-  const db = createSupabase(c.env)
-  const body = await c.req.json()
-
-  const { data, error } = await db.insert('vehicles', {
-    customer_id:     body.customer_id,
-    car_number:      body.car_number ?? null,
-    car_maker:       body.car_maker ?? null,
-    car_model:       body.car_model ?? null,
-    car_color:       body.car_color ?? null,
-    car_year:        body.car_year ?? null,
-    car_size:        body.car_size ?? 'M',
-    inspection_date: body.inspection_date ?? null,
-    notes:           body.notes ?? null,
-  })
-  if (error) return c.json({ error }, 500)
-  return c.json(data, 201)
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.vehicles (customer_id, car_number, car_maker, car_model, car_color, car_year, car_size, inspection_date, notes)
+      VALUES (${body.customer_id}, ${body.car_number ?? null}, ${body.car_maker ?? null},
+              ${body.car_model ?? null}, ${body.car_color ?? null}, ${body.car_year ?? null},
+              ${body.car_size ?? 'M'}, ${body.inspection_date ?? null}, ${body.notes ?? null})
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
 })
 
-// 車両更新
 vehicles.put('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const id = c.req.param('id')
-  const body = await c.req.json()
-
-  const { data, error } = await db.update('vehicles', { id }, {
-    car_number:      body.car_number ?? null,
-    car_maker:       body.car_maker ?? null,
-    car_model:       body.car_model ?? null,
-    car_color:       body.car_color ?? null,
-    car_year:        body.car_year ?? null,
-    car_size:        body.car_size ?? 'M',
-    inspection_date: body.inspection_date ?? null,
-    notes:           body.notes ?? null,
-  })
-  if (error) return c.json({ error }, 500)
-  return c.json(data)
+  const sql = createDb(c.env)
+  try {
+    const id = c.req.param('id')
+    const body = await c.req.json()
+    const data = await sql`
+      UPDATE carwash.vehicles SET
+        car_number = ${body.car_number ?? null}, car_maker = ${body.car_maker ?? null},
+        car_model = ${body.car_model ?? null}, car_color = ${body.car_color ?? null},
+        car_year = ${body.car_year ?? null}, car_size = ${body.car_size ?? 'M'},
+        inspection_date = ${body.inspection_date ?? null}, notes = ${body.notes ?? null}
+      WHERE id = ${id} RETURNING *`
+    return c.json(data[0])
+  } finally { await sql.end() }
 })
 
-// 車両削除
 vehicles.delete('/:id', async (c) => {
-  const db = createSupabase(c.env)
-  const { error } = await db.remove('vehicles', { id: c.req.param('id') })
-  if (error) return c.json({ error }, 500)
-  return c.json({ ok: true })
+  const sql = createDb(c.env)
+  try {
+    await sql`DELETE FROM carwash.vehicles WHERE id = ${c.req.param('id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
 })
 
 export default vehicles
