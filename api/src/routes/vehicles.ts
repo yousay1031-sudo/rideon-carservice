@@ -8,8 +8,17 @@ vehicles.get('/', async (c) => {
   try {
     const { customer_id } = c.req.query()
     const data = customer_id
-      ? await sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${customer_id} ORDER BY created_at DESC`
-      : await sql`SELECT * FROM carwash.vehicles ORDER BY created_at DESC`
+      ? await sql`
+          SELECT v.*, c.name as customer_name, c.furigana, c.phone as customer_phone
+          FROM carwash.vehicles v
+          LEFT JOIN carwash.customers c ON c.id = v.customer_id
+          WHERE v.customer_id = ${customer_id}
+          ORDER BY v.created_at DESC`
+      : await sql`
+          SELECT v.*, c.name as customer_name, c.furigana, c.phone as customer_phone
+          FROM carwash.vehicles v
+          LEFT JOIN carwash.customers c ON c.id = v.customer_id
+          ORDER BY v.created_at DESC`
     return c.json(data)
   } finally { await sql.end() }
 })
@@ -19,7 +28,11 @@ vehicles.get('/:id', async (c) => {
   try {
     const id = c.req.param('id')
     const [vehicle, history] = await Promise.all([
-      sql`SELECT * FROM carwash.vehicles WHERE id = ${id}`,
+      sql`
+        SELECT v.*, c.name as customer_name, c.furigana, c.phone as customer_phone
+        FROM carwash.vehicles v
+        LEFT JOIN carwash.customers c ON c.id = v.customer_id
+        WHERE v.id = ${id}`,
       sql`SELECT * FROM carwash.wash_history WHERE vehicle_id = ${id} ORDER BY wash_date DESC LIMIT 50`,
     ])
     if (!vehicle[0]) return c.json({ error: '車両が見つかりません' }, 404)
