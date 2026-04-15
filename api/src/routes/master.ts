@@ -27,7 +27,7 @@ master.get('/service-menu', async (c) => {
   try {
     const menus = await sql`SELECT * FROM carwash.service_menu WHERE is_active = true ORDER BY display_order`
     const prices = await sql`SELECT * FROM carwash.service_prices`
-    const CAR_SIZES = ['SS', 'S', 'M', 'L', 'LL', 'XL']
+    const CAR_SIZES = ['''SS''', '''S''', '''M''', '''L''', '''LL''', '''XL''']
     const priceMap = new Map<string, number>()
     for (const p of prices) priceMap.set(`${p.service_id}_${p.car_size}`, p.price)
     const result = menus.map((m: any) => ({
@@ -53,7 +53,10 @@ master.get('/oil-menu', async (c) => {
   try {
     const grades = await sql`SELECT * FROM carwash.oil_grades WHERE is_active = true ORDER BY display_order`
     const work = await sql`SELECT * FROM carwash.oil_work_price ORDER BY id DESC LIMIT 1`
-    return c.json({ grades, work_price: work[0]?.work_price ?? 550 })
+    const workPrice = work[0]?.work_price ?? 550
+    // app.js互換: 配列形式で返す（各gradeにwork_priceを付加）
+    const result = grades.map((g: any) => ({ ...g, work_price: workPrice }))
+    return c.json(result)
   } finally { await sql.end() }
 })
 
@@ -69,9 +72,10 @@ master.get('/all', async (c) => {
       sql`SELECT * FROM carwash.oil_grades WHERE is_active = true ORDER BY display_order`,
       sql`SELECT * FROM carwash.oil_work_price ORDER BY id DESC LIMIT 1`,
     ])
-    const CAR_SIZES = ['SS', 'S', 'M', 'L', 'LL', 'XL']
+    const CAR_SIZES = ['''SS''', '''S''', '''M''', '''L''', '''LL''', '''XL''']
     const priceMap = new Map<string, number>()
     for (const p of prices) priceMap.set(`${p.service_id}_${p.car_size}`, p.price)
+    const workPrice = work[0]?.work_price ?? 550
     return c.json({
       stores,
       staff,
@@ -82,7 +86,7 @@ master.get('/all', async (c) => {
           : null,
       })),
       tire_menu: tire,
-      oil: { grades, work_price: work[0]?.work_price ?? 550 },
+      oil: { grades, work_price: workPrice },
     })
   } finally { await sql.end() }
 })
