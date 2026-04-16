@@ -54,7 +54,7 @@ master.get('/oil-menu', async (c) => {
     const grades = await sql`SELECT * FROM carwash.oil_grades WHERE is_active = true ORDER BY display_order`
     const work = await sql`SELECT * FROM carwash.oil_work_price ORDER BY id DESC LIMIT 1`
     const workPrice = work[0]?.work_price ?? 550
-    // app.js互換: 配列形式で返す（各gradeにwork_priceを付加）
+    // app.jsäºæ: éåå½¢å¼ã§è¿ãï¼ågradeã«work_priceãä»å ï¼
     const result = grades.map((g: any) => ({ ...g, work_price: workPrice }))
     return c.json(result)
   } finally { await sql.end() }
@@ -88,6 +88,15 @@ master.get('/all', async (c) => {
       tire_menu: tire,
       oil: { grades, work_price: workPrice },
     })
+  } finally { await sql.end() }
+})
+
+
+master.get('/service-prices', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.service_prices ORDER BY service_id, car_size`
+    return c.json(data)
   } finally { await sql.end() }
 })
 
