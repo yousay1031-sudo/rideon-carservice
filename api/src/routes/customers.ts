@@ -16,14 +16,14 @@ customers.get('/', async (c) => {
            OR furigana ILIKE ${'%' + searchQuery + '%'}
            OR phone ILIKE ${'%' + searchQuery + '%'}
         ORDER BY furigana, name LIMIT 200`
-      const ids = rawData.map((c: any) => c.id)
-      // postgres.jsã§ã¯sql([...])ã§INå¥ãçæ
-      const vehicles = ids.length > 0
-        ? await sql`SELECT * FROM carwash.vehicles WHERE customer_id IN ${sql(ids)} ORDER BY created_at DESC`
-        : []
-      data = rawData.map((c: any) => ({
-        ...c,
-        vehicles: vehicleMap[c.id] || []
+      const vehicleMap: Record<number, any[]> = {}
+      for (const row of rawData) {
+        const vlist = await sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${row.id} ORDER BY created_at DESC`
+        vehicleMap[row.id] = vlist
+      }
+      data = rawData.map((cust: any) => ({
+        ...cust,
+        vehicles: vehicleMap[cust.id] || []
       }))
     } else if (store_id && group) {
       data = await sql`SELECT * FROM carwash.customers WHERE primary_store_id = ${store_id} AND customer_group = ${group} ORDER BY furigana, name LIMIT 200`
@@ -44,7 +44,7 @@ customers.get('/:id', async (c) => {
       sql`SELECT * FROM carwash.customers WHERE id = ${id}`,
       sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${id} ORDER BY created_at DESC`,
     ])
-    if (!customer[0]) return c.json({ error: 'ÃÂÃÂÃÂÃÂ©ÃÂÃÂÃÂÃÂ¡ÃÂÃÂÃÂÃÂ§ÃÂÃÂÃÂÃÂ¥ÃÂÃÂÃÂÃÂ®ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ£ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¨ÃÂÃÂÃÂÃÂ¦ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ£ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¤ÃÂÃÂÃÂÃÂ£ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ£ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ£ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¾ÃÂÃÂÃÂÃÂ£ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ£ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ' }, 404)
+    if (!customer[0]) return c.json({ error: '顧客が見つかりません' }, 404)
     return c.json({ ...customer[0], vehicles })
   } finally { await sql.end() }
 })
