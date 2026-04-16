@@ -18,7 +18,7 @@ customers.get('/', async (c) => {
         ORDER BY furigana, name LIMIT 200`
       const ids = rawData.map((c: any) => c.id)
       const vehicles = ids.length > 0
-        ? await sql`SELECT * FROM carwash.vehicles WHERE customer_id = ANY(${sql.array(ids, 'int4')}) ORDER BY created_at DESC`
+        ? await sql`SELECT * FROM carwash.vehicles WHERE customer_id = ANY(ARRAY[${sql.unsafe(ids.join(','))}]::int[]) ORDER BY created_at DESC`
         : []
       data = rawData.map((c: any) => ({
         ...c,
@@ -43,7 +43,7 @@ customers.get('/:id', async (c) => {
       sql`SELECT * FROM carwash.customers WHERE id = ${id}`,
       sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${id} ORDER BY created_at DESC`,
     ])
-    if (!customer[0]) return c.json({ error: 'Ã©Â¡Â§Ã¥Â®Â¢Ã£ÂÂÃ¨Â¦ÂÃ£ÂÂ¤Ã£ÂÂÃ£ÂÂÃ£ÂÂ¾Ã£ÂÂÃ£ÂÂ' }, 404)
+    if (!customer[0]) return c.json({ error: 'ÃÂ©ÃÂ¡ÃÂ§ÃÂ¥ÃÂ®ÃÂ¢ÃÂ£ÃÂÃÂÃÂ¨ÃÂ¦ÃÂÃÂ£ÃÂÃÂ¤ÃÂ£ÃÂÃÂÃÂ£ÃÂÃÂÃÂ£ÃÂÃÂ¾ÃÂ£ÃÂÃÂÃÂ£ÃÂÃÂ' }, 404)
     return c.json({ ...customer[0], vehicles })
   } finally { await sql.end() }
 })
