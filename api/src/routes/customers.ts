@@ -10,12 +10,20 @@ customers.get('/', async (c) => {
     const searchQuery = q || search
     let data
     if (searchQuery) {
-      data = await sql`
+      const rawData = await sql`
         SELECT * FROM carwash.customers
         WHERE name ILIKE ${'%' + searchQuery + '%'}
            OR furigana ILIKE ${'%' + searchQuery + '%'}
            OR phone ILIKE ${'%' + searchQuery + '%'}
         ORDER BY furigana, name LIMIT 200`
+      const ids = rawData.map((c: any) => c.id)
+      const vehicles = ids.length > 0
+        ? await sql`SELECT * FROM carwash.vehicles WHERE customer_id = ANY(${sql.array(ids, 'int4')}) ORDER BY created_at DESC`
+        : []
+      data = rawData.map((c: any) => ({
+        ...c,
+        vehicles: vehicles.filter((v: any) => v.customer_id === c.id)
+      }))
     } else if (store_id && group) {
       data = await sql`SELECT * FROM carwash.customers WHERE primary_store_id = ${store_id} AND customer_group = ${group} ORDER BY furigana, name LIMIT 200`
     } else if (store_id) {
@@ -35,7 +43,7 @@ customers.get('/:id', async (c) => {
       sql`SELECT * FROM carwash.customers WHERE id = ${id}`,
       sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${id} ORDER BY created_at DESC`,
     ])
-    if (!customer[0]) return c.json({ error: 'é¡§å®¢ãè¦ã¤ããã¾ãã' }, 404)
+    if (!customer[0]) return c.json({ error: 'Ã©Â¡Â§Ã¥Â®Â¢Ã£ÂÂÃ¨Â¦ÂÃ£ÂÂ¤Ã£ÂÂÃ£ÂÂÃ£ÂÂ¾Ã£ÂÂÃ£ÂÂ' }, 404)
     return c.json({ ...customer[0], vehicles })
   } finally { await sql.end() }
 })
