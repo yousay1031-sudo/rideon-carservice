@@ -6,14 +6,15 @@ const customers = new Hono<{ Bindings: Bindings }>()
 customers.get('/', async (c) => {
   const sql = createDb(c.env)
   try {
-    const { q, store_id, group } = c.req.query()
+    const { q, search, store_id, group } = c.req.query()
+    const searchQuery = q || search
     let data
-    if (q) {
+    if (searchQuery) {
       data = await sql`
         SELECT * FROM carwash.customers
-        WHERE name ILIKE ${'%' + q + '%'}
-           OR furigana ILIKE ${'%' + q + '%'}
-           OR phone ILIKE ${'%' + q + '%'}
+        WHERE name ILIKE ${'%' + searchQuery + '%'}
+           OR furigana ILIKE ${'%' + searchQuery + '%'}
+           OR phone ILIKE ${'%' + searchQuery + '%'}
         ORDER BY furigana, name LIMIT 200`
     } else if (store_id && group) {
       data = await sql`SELECT * FROM carwash.customers WHERE primary_store_id = ${store_id} AND customer_group = ${group} ORDER BY furigana, name LIMIT 200`
@@ -34,7 +35,7 @@ customers.get('/:id', async (c) => {
       sql`SELECT * FROM carwash.customers WHERE id = ${id}`,
       sql`SELECT * FROM carwash.vehicles WHERE customer_id = ${id} ORDER BY created_at DESC`,
     ])
-    if (!customer[0]) return c.json({ error: '顧客が見つかりません' }, 404)
+    if (!customer[0]) return c.json({ error: 'é¡§å®¢ãè¦ã¤ããã¾ãã' }, 404)
     return c.json({ ...customer[0], vehicles })
   } finally { await sql.end() }
 })
