@@ -58,8 +58,23 @@ compat.get('/wash-history', async (c) => {
     const { vehicle_id, limit } = c.req.query()
     const lim = limit ? parseInt(limit) : 50
     const data = vehicle_id
-      ? await sql`SELECT * FROM carwash.wash_history WHERE vehicle_id = ${vehicle_id} ORDER BY wash_date DESC LIMIT ${lim}`
-      : await sql`SELECT * FROM carwash.wash_history ORDER BY wash_date DESC LIMIT ${lim}`
+      ? await sql`
+          SELECT wh.*, v.car_number, v.car_maker, v.car_model, v.car_size as vehicle_car_size,
+                 c.name as customer_name, c.phone as customer_phone,
+                 wh.service_name as wash_type
+          FROM carwash.wash_history wh
+          LEFT JOIN carwash.vehicles v ON v.id = wh.vehicle_id
+          LEFT JOIN carwash.customers c ON c.id = v.customer_id
+          WHERE wh.vehicle_id = ${vehicle_id}
+          ORDER BY wh.wash_date DESC LIMIT ${lim}`
+      : await sql`
+          SELECT wh.*, v.car_number, v.car_maker, v.car_model, v.car_size as vehicle_car_size,
+                 c.name as customer_name, c.phone as customer_phone,
+                 wh.service_name as wash_type
+          FROM carwash.wash_history wh
+          LEFT JOIN carwash.vehicles v ON v.id = wh.vehicle_id
+          LEFT JOIN carwash.customers c ON c.id = v.customer_id
+          ORDER BY wh.wash_date DESC LIMIT ${lim}`
     return c.json(data)
   } finally { await sql.end() }
 })
