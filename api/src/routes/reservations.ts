@@ -75,15 +75,15 @@ reservations.post('/', async (c) => {
       INSERT INTO carwash.reservations
         (store_id, customer_id, vehicle_id, customer_name, customer_phone,
          car_number, car_size, reservation_date, start_time, end_time,
-         work_lane, staff_id, dealer_name, service_name, status, notes, booked_via_line, line_user_id)
+         service_name, work_lane, staff_id, dealer_name, status, notes, booked_via_line, line_user_id)
       VALUES
         (${body.store_id}, ${body.customer_id ?? null}, ${body.vehicle_id ?? null},
          ${body.customer_name ?? null}, ${body.customer_phone ?? null},
          ${body.car_number ?? null}, ${body.car_size ?? 'M'},
          ${body.reservation_date}, ${body.start_time}, ${body.end_time ?? null},
+         ${body.service_type ?? body.service_name ?? null},
          ${body.work_lane ?? '洗車場'}, ${body.staff_id ?? null},
-         ${body.dealer_name ?? null}, ${body.service_type ?? body.service_name ?? null},
-         'confirmed', ${body.notes ?? null},
+         ${body.dealer_name ?? null}, 'confirmed', ${body.notes ?? null},
          ${body.booked_via_line ?? false}, ${body.line_user_id ?? null})
       RETURNING *`
     return c.json(data[0], 201)
