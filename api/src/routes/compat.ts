@@ -180,4 +180,140 @@ compat.post('/line/send-campaign', async (c) => c.json({ ok: true }))
 compat.post('/line/send-inspection-alerts', async (c) => c.json({ ok: true }))
 compat.post('/line/send-reservation-notification', async (c) => c.json({ ok: true }))
 
+// 旧システム互換エイリアス
+compat.get('/stores', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.stores WHERE is_active = true ORDER BY id`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.get('/staff', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.staff_members WHERE is_active = true ORDER BY id`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.post('/staff', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.staff_members (name, store_id, role, is_active)
+      VALUES (${body.name}, ${body.store_id ?? 1}, ${body.role ?? 'staff'}, true)
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
+})
+
+compat.put('/staff/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      UPDATE carwash.staff_members SET name = ${body.name}, store_id = ${body.store_id ?? 1}, is_active = ${body.is_active ?? true}
+      WHERE id = ${c.req.param('id')} RETURNING *`
+    return c.json(data[0])
+  } finally { await sql.end() }
+})
+
+compat.delete('/staff/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    await sql`UPDATE carwash.staff_members SET is_active = false WHERE id = ${c.req.param('id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
+})
+
+compat.get('/oil-menu', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const grades = await sql`SELECT * FROM carwash.oil_grades WHERE is_active = true ORDER BY display_order`
+    const work = await sql`SELECT * FROM carwash.oil_work_price ORDER BY id DESC LIMIT 1`
+    const workPrice = work[0]?.work_price ?? 550
+    return c.json(grades.map((g: any) => ({ ...g, work_price: workPrice })))
+  } finally { await sql.end() }
+})
+
+compat.get('/tire-menu', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.tire_menu ORDER BY id`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.get('/wash-services', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.service_menu WHERE is_active = true ORDER BY display_order`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.get('/wash-service-prices/all', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.service_prices ORDER BY service_id, car_size`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.get('/menu-items', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.wash_menu_items WHERE is_active = true ORDER BY display_order`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.get('/tire-storage-menu', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.tire_menu WHERE service_type = 'storage' ORDER BY id`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.get('/tire-disposal-menu', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.tire_menu WHERE service_type = 'disposal' ORDER BY id`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+// タイヤ管理（テーブルがなければ空配列を返す）
+compat.get('/tire-storage', async (c) => { return c.json([]) })
+compat.post('/tire-storage', async (c) => { return c.json({ ok: true }) })
+compat.put('/tire-storage/:id', async (c) => { return c.json({ ok: true }) })
+compat.delete('/tire-storage/:id', async (c) => { return c.json({ ok: true }) })
+
+compat.get('/tire-purchases', async (c) => { return c.json([]) })
+compat.post('/tire-purchases', async (c) => { return c.json({ ok: true }) })
+compat.put('/tire-purchases/:id', async (c) => { return c.json({ ok: true }) })
+compat.delete('/tire-purchases/:id', async (c) => { return c.json({ ok: true }) })
+
+// 顧客CSV一括インポート
+compat.post('/customers/import', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const customers = body.customers ?? []
+    const results = []
+    for (const cust of customers) {
+      const data = await sql`
+        INSERT INTO carwash.customers (name, furigana, phone, email, address, customer_group, primary_store_id, notes)
+        VALUES (${cust.name}, ${cust.furigana ?? null}, ${cust.phone ?? null}, ${cust.email ?? null},
+                ${cust.address ?? null}, ${cust.customer_group ?? 'general'}, ${cust.primary_store_id ?? 1}, ${cust.notes ?? null})
+        ON CONFLICT DO NOTHING RETURNING *`
+      if (data[0]) results.push(data[0])
+    }
+    return c.json({ imported: results.length })
+  } finally { await sql.end() }
+})
+
 export default compat
