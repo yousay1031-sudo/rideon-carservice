@@ -185,7 +185,8 @@ compat.get('/stores', async (c) => {
   const sql = createDb(c.env)
   try {
     const data = await sql`SELECT * FROM carwash.stores WHERE is_active = true ORDER BY id`
-    return c.json(data)
+    // 旧システム互換: store_name フィールドを追加
+    return c.json(data.map((s: any) => ({ ...s, store_name: s.name })))
   } finally { await sql.end() }
 })
 
