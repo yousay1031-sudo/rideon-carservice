@@ -316,4 +316,49 @@ compat.post('/customers/import', async (c) => {
   } finally { await sql.end() }
 })
 
+// タイヤ保管現在状況（スタブ）
+compat.get('/tire-storage/current/:vehicleId', async (c) => {
+  return c.json(null)
+})
+
+// 業務日報
+compat.get('/daily-report', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const { date, store_id } = c.req.query()
+    const targetDate = date || new Date().toISOString().split('T')[0]
+
+    const [washHistory, reservations] = await Promise.all([
+      sql`
+        SELECT wh.*, v.car_number, v.car_maker, v.car_model, v.car_size,
+               c.name as customer_name
+        FROM carwash.wash_history wh
+        LEFT JOIN carwash.vehicles v ON v.id = wh.vehicle_id
+        LEFT JOIN carwash.customers c ON c.id = v.customer_id
+        WHERE DATE(wh.wash_date) = ${targetDate}
+        ORDER BY wh.wash_date`,
+      sql`
+        SELECT r.*, c.name as customer_name_ref, v.car_maker, v.car_model, v.car_number
+        FROM carwash.reservations r
+        LEFT JOIN carwash.customers c ON c.id = r.customer_id
+        LEFT JOIN carwash.vehicles v ON v.id = r.vehicle_id
+        WHERE r.reservation_date::date = ${targetDate}::date
+        ${store_id ? sql`AND r.store_id = ${store_id}` : sql``}
+        ORDER BY r.start_time`,
+    ])
+
+    const totalSales = washHistory.reduce((sum: number, w: any) => sum + (w.price || 0), 0)
+
+    return c.json({
+      date: targetDate,
+      wash_history: washHistory,
+      reservations: reservations,
+      summary: {
+        total_count: washHistory.length,
+        total_sales: totalSales,
+      }
+    })
+  } finally { await sql.end() }
+})
+
 export default compat

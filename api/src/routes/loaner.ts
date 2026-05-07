@@ -12,7 +12,7 @@ loaner.get('/loaner-cars', async (c) => {
       ? await sql`SELECT * FROM carwash.loaner_cars WHERE store_id = ${store_id} AND is_active = true ORDER BY id`
       : await sql`SELECT * FROM carwash.loaner_cars WHERE is_active = true ORDER BY id`
     return c.json(data)
-  } finally { await sql.end() }
+  } catch { return c.json([]) } finally { await sql.end() }
 })
 
 loaner.get('/loaner-cars/:id', async (c) => {
@@ -71,7 +71,7 @@ loaner.get('/loaner-rentals', async (c) => {
       LEFT JOIN carwash.customers c ON c.id = lr.customer_id
       ORDER BY lr.created_at DESC LIMIT 100`
     return c.json(data)
-  } finally { await sql.end() }
+  } catch { return c.json([]) } finally { await sql.end() }
 })
 
 loaner.post('/loaner-rentals', async (c) => {
