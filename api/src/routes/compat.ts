@@ -268,7 +268,7 @@ compat.get('/menu-items', async (c) => {
   try {
     const data = await sql`SELECT * FROM carwash.wash_menu_items WHERE is_active = true ORDER BY display_order`
     return c.json(data)
-  } finally { await sql.end() }
+  } catch { return c.json([]) } finally { await sql.end() }
 })
 
 compat.get('/tire-storage-menu', async (c) => {
