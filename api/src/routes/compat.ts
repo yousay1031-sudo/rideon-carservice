@@ -250,8 +250,63 @@ compat.get('/tire-menu', async (c) => {
 compat.get('/wash-services', async (c) => {
   const sql = createDb(c.env)
   try {
-    const data = await sql`SELECT * FROM carwash.service_menu WHERE is_active = true ORDER BY display_order`
+    const { all } = c.req.query()
+    const data = all === 'true'
+      ? await sql`SELECT * FROM carwash.service_menu ORDER BY display_order, id`
+      : await sql`SELECT * FROM carwash.service_menu WHERE is_active = true ORDER BY display_order`
     return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.post('/wash-services', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.service_menu (name, category, description, is_size_based, flat_price, is_active, display_order)
+      VALUES (${body.name}, ${body.category ?? '洗車コース'}, ${body.description ?? null},
+              ${body.is_size_based ?? true}, ${body.flat_price ?? null}, ${body.is_active ?? true},
+              ${body.display_order ?? 99})
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
+})
+
+compat.put('/wash-services/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      UPDATE carwash.service_menu SET
+        name = ${body.name}, category = ${body.category ?? '洗車コース'},
+        description = ${body.description ?? null}, is_size_based = ${body.is_size_based ?? true},
+        flat_price = ${body.flat_price ?? null}, is_active = ${body.is_active ?? true},
+        display_order = ${body.display_order ?? 99}
+      WHERE id = ${c.req.param('id')} RETURNING *`
+    return c.json(data[0])
+  } finally { await sql.end() }
+})
+
+compat.delete('/wash-services/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    await sql`UPDATE carwash.service_menu SET is_active = false WHERE id = ${c.req.param('id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
+})
+
+compat.put('/wash-service-prices/service/:service_id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const serviceId = c.req.param('service_id')
+    const { prices } = await c.req.json()
+    await sql`DELETE FROM carwash.service_prices WHERE service_id = ${serviceId}`
+    for (const [car_size, price] of Object.entries(prices as Record<string, number>)) {
+      if (price != null && String(price) !== '') {
+        await sql`INSERT INTO carwash.service_prices (service_id, car_size, price) VALUES (${serviceId}, ${car_size}, ${price})`
+      }
+    }
+    return c.json({ ok: true })
   } finally { await sql.end() }
 })
 
