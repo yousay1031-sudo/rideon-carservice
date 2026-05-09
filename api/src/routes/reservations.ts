@@ -75,7 +75,8 @@ reservations.post('/', async (c) => {
       INSERT INTO carwash.reservations
         (store_id, customer_id, vehicle_id, customer_name, customer_phone,
          car_number, car_size, reservation_date, start_time, end_time,
-         service_name, work_lane, staff_id, dealer_name, status, notes, booked_via_line, line_user_id)
+         service_name, work_lane, staff_id, dealer_name, status, notes,
+         total_price, booked_via_line, line_user_id)
       VALUES
         (${body.store_id}, ${body.customer_id ?? null}, ${body.vehicle_id ?? null},
          ${body.customer_name ?? null}, ${body.customer_phone ?? null},
@@ -84,7 +85,7 @@ reservations.post('/', async (c) => {
          ${body.service_type ?? body.service_name ?? null},
          ${body.work_lane ?? '洗車場'}, ${body.staff_id ?? null},
          ${body.dealer_name ?? null}, 'confirmed', ${body.notes ?? null},
-         ${body.booked_via_line ?? false}, ${body.line_user_id ?? null})
+         ${body.total_price ?? null}, ${body.booked_via_line ?? false}, ${body.line_user_id ?? null})
       RETURNING *`
     return c.json(data[0], 201)
   } finally { await sql.end() }
@@ -110,7 +111,8 @@ reservations.put('/:id', async (c) => {
         staff_id = ${body.staff_id ?? null},
         dealer_name = ${body.dealer_name ?? null},
         status = ${body.status ?? 'confirmed'},
-        notes = ${body.notes ?? null}
+        notes = ${body.notes ?? null},
+        total_price = COALESCE(${body.total_price ?? null}, total_price)
       WHERE id = ${id} RETURNING *`
     return c.json(data[0])
   } finally { await sql.end() }
