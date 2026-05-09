@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
 import { createDb, type Bindings } from '../lib/supabase'
 
 const master = new Hono<{ Bindings: Bindings }>()
@@ -27,7 +27,7 @@ master.get('/service-menu', async (c) => {
   try {
     const menus = await sql`SELECT * FROM carwash.service_menu WHERE is_active = true ORDER BY display_order`
     const prices = await sql`SELECT * FROM carwash.service_prices`
-    const CAR_SIZES = ['''SS''', '''S''', '''M''', '''L''', '''LL''', '''XL''']
+    const CAR_SIZES = ['SS', 'S', 'M', 'L', 'LL', 'XL']
     const priceMap = new Map<string, number>()
     for (const p of prices) priceMap.set(`${p.service_id}_${p.car_size}`, p.price)
     const result = menus.map((m: any) => ({
@@ -54,7 +54,7 @@ master.get('/oil-menu', async (c) => {
     const grades = await sql`SELECT * FROM carwash.oil_grades WHERE is_active = true ORDER BY display_order`
     const work = await sql`SELECT * FROM carwash.oil_work_price ORDER BY id DESC LIMIT 1`
     const workPrice = work[0]?.work_price ?? 550
-    // app.jsäºæ: éåå½¢å¼ã§è¿ãï¼ågradeã«work_priceãä»å ï¼
+    // app.jsﾃ､ﾂｺﾂ津ｦﾂ渉・ ﾃｩﾂ・催･ﾂ按療･ﾂｽﾂ｢ﾃ･ﾂｼﾂ湘｣ﾂ・ｧﾃｨﾂｿﾂ氾｣ﾂ・凖ｯﾂｼﾂ暗･ﾂ青・radeﾃ｣ﾂ・ｫwork_priceﾃ｣ﾂつ津､ﾂｻﾂ佚･ﾂ環ﾃｯﾂｼﾂ・
     const result = grades.map((g: any) => ({ ...g, work_price: workPrice }))
     return c.json(result)
   } finally { await sql.end() }
@@ -72,7 +72,7 @@ master.get('/all', async (c) => {
       sql`SELECT * FROM carwash.oil_grades WHERE is_active = true ORDER BY display_order`,
       sql`SELECT * FROM carwash.oil_work_price ORDER BY id DESC LIMIT 1`,
     ])
-    const CAR_SIZES = ['''SS''', '''S''', '''M''', '''L''', '''LL''', '''XL''']
+    const CAR_SIZES = ['SS', 'S', 'M', 'L', 'LL', 'XL']
     const priceMap = new Map<string, number>()
     for (const p of prices) priceMap.set(`${p.service_id}_${p.car_size}`, p.price)
     const workPrice = work[0]?.work_price ?? 550
@@ -101,3 +101,4 @@ master.get('/service-prices', async (c) => {
 })
 
 export default master
+
