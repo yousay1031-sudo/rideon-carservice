@@ -263,10 +263,10 @@ compat.post('/wash-services', async (c) => {
   try {
     const body = await c.req.json()
     const data = await sql`
-      INSERT INTO carwash.service_menu (name, category, description, is_size_based, flat_price, is_active, display_order)
+      INSERT INTO carwash.service_menu (name, category, description, is_size_based, flat_price, is_active, display_order, show_in_reservation)
       VALUES (${body.name}, ${body.category ?? '洗車コース'}, ${body.description ?? null},
               ${body.is_size_based ?? true}, ${body.flat_price ?? null}, ${body.is_active ?? true},
-              ${body.display_order ?? 99})
+              ${body.display_order ?? 99}, ${body.show_in_reservation ?? false})
       RETURNING *`
     return c.json(data[0], 201)
   } finally { await sql.end() }
@@ -281,7 +281,8 @@ compat.put('/wash-services/:id', async (c) => {
         name = ${body.name}, category = ${body.category ?? '洗車コース'},
         description = ${body.description ?? null}, is_size_based = ${body.is_size_based ?? true},
         flat_price = ${body.flat_price ?? null}, is_active = ${body.is_active ?? true},
-        display_order = ${body.display_order ?? 99}
+        display_order = ${body.display_order ?? 99},
+        show_in_reservation = ${body.show_in_reservation ?? false}
       WHERE id = ${c.req.param('id')} RETURNING *`
     return c.json(data[0])
   } finally { await sql.end() }
