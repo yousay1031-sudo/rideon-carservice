@@ -1,6 +1,5 @@
 import { Hono } from 'hono'
 import { createDb, type Bindings } from '../lib/supabase'
-// CI path-filter test marker (deploy.yml paths-filter verification) — safe to remove after confirming the workflow triggers
 
 const customers = new Hono<{ Bindings: Bindings }>()
 
