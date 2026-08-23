@@ -10,6 +10,7 @@ import report       from './routes/report'
 import master       from './routes/master'
 import compat       from './routes/compat'
 import loaner       from './routes/loaner'
+import documents    from './routes/documents'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -42,6 +43,7 @@ app.route('/api/report',       report)
 app.route('/api/master',       master)
 app.route('/api',              compat)
 app.route('/api',              loaner)
+app.route('/api',              documents)
 
 app.notFound(c => c.json({ error: 'Not Found' }, 404))
 app.onError((err, c) => {

@@ -7,7 +7,7 @@ checkout.post('/:reservation_id/confirm', async (c) => {
   const sql = createDb(c.env)
   try {
     const reservationId = c.req.param('reservation_id')
-    const { items, payment_method, total_price } = await c.req.json()
+    const { items, payment_method, total_price, card_brand } = await c.req.json()
 
     const reservation = await sql`SELECT * FROM carwash.reservations WHERE id = ${reservationId}`
     if (!reservation[0]) return c.json({ error: '予約が見つかりません' }, 404)
@@ -32,12 +32,32 @@ checkout.post('/:reservation_id/confirm', async (c) => {
            ${item.unit_price}, ${item.quantity ?? 1}, ${item.subtotal}, ${item.notes ?? null})`
     }
 
+    // 売掛の場合は請求書番号を採番
+    let invoiceNumber: string | null = null
+    if (payment_method === '売掛') {
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = now.getMonth() + 1
+      const monthStr = String(month).padStart(2, '0')
+      const dateFrom = `${year}-${monthStr}-01`
+      const dateTo = new Date(year, month, 0).toISOString().split('T')[0]
+      const countResult = await sql`
+        SELECT COUNT(*) AS cnt FROM carwash.reservations
+        WHERE payment_method = '売掛' AND status = 'completed'
+          AND reservation_date >= ${dateFrom} AND reservation_date <= ${dateTo}
+          AND invoice_number IS NOT NULL`
+      const nextNum = Number((countResult[0] as any)?.cnt || 0) + 1
+      invoiceNumber = `${year}-${monthStr}-${String(nextNum).padStart(3, '0')}`
+    }
+
     await sql`
       UPDATE carwash.reservations SET
         status = 'completed',
         total_price = ${total_price},
         payment_method = ${payment_method},
-        paid_at = NOW()
+        card_brand = ${card_brand ?? null},
+        paid_at = NOW(),
+        invoice_number = COALESCE(${invoiceNumber}, invoice_number)
       WHERE id = ${reservationId}`
 
     const r = reservation[0]
@@ -54,7 +74,7 @@ checkout.post('/:reservation_id/confirm', async (c) => {
         VALUES (${r.vehicle_id}, ${reservationId}, ${serviceNames}, ${r.car_size ?? 'M'}, ${total_price})`
     }
 
-    return c.json({ ok: true, total_price, payment_method })
+    return c.json({ ok: true, total_price, payment_method, invoice_number: invoiceNumber })
   } finally { await sql.end() }
 })
 

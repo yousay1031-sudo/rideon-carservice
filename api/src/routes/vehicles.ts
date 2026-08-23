@@ -6,13 +6,25 @@ const vehicles = new Hono<{ Bindings: Bindings }>()
 vehicles.get('/', async (c) => {
   const sql = createDb(c.env)
   try {
-    const { customer_id } = c.req.query()
+    const { customer_id, search } = c.req.query()
     const data = customer_id
       ? await sql`
           SELECT v.*, c.name as customer_name, c.furigana, c.phone as customer_phone
           FROM carwash.vehicles v
           LEFT JOIN carwash.customers c ON c.id = v.customer_id
           WHERE v.customer_id = ${customer_id}
+          ORDER BY v.created_at DESC`
+      : search
+      ? await sql`
+          SELECT v.*, c.name as customer_name, c.furigana, c.phone as customer_phone
+          FROM carwash.vehicles v
+          LEFT JOIN carwash.customers c ON c.id = v.customer_id
+          WHERE v.car_number ILIKE ${'%' + search + '%'}
+            OR v.car_maker ILIKE ${'%' + search + '%'}
+            OR v.car_model ILIKE ${'%' + search + '%'}
+            OR c.name ILIKE ${'%' + search + '%'}
+            OR c.furigana ILIKE ${'%' + search + '%'}
+            OR c.phone LIKE ${'%' + search + '%'}
           ORDER BY v.created_at DESC`
       : await sql`
           SELECT v.*, c.name as customer_name, c.furigana, c.phone as customer_phone

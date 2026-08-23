@@ -3,6 +3,11 @@ import { createDb, type Bindings } from '../lib/supabase'
 
 const compat = new Hono<{ Bindings: Bindings }>()
 
+const EXPENSE_STORE_MAP: Record<string, string> = {
+  '1': '75bf10cc-09f6-48a3-94a7-01252bc04ba2',
+  '2': '6b341cb0-972d-4fc8-aefe-d0c1237fbf95',
+}
+
 compat.get('/stats', async (c) => {
   const sql = createDb(c.env)
   try {
@@ -404,17 +409,296 @@ compat.get('/daily-report', async (c) => {
         ORDER BY r.start_time`,
     ])
 
-    const totalSales = washHistory.reduce((sum: number, w: any) => sum + (w.price || 0), 0)
+    const completedPaid = (reservations as any[]).filter(r => r.status === 'completed' && r.paid_at != null)
+    const totalCount = completedPaid.length
+    const totalSales = completedPaid.reduce((sum: number, r: any) => sum + (Number(r.total_price) || 0), 0)
+    const byPayment: Record<string, number> = {}
+    completedPaid.forEach((r: any) => {
+      const m = r.payment_method || 'その他'
+      byPayment[m] = (byPayment[m] || 0) + (Number(r.total_price) || 0)
+    })
 
     return c.json({
       date: targetDate,
       wash_history: washHistory,
       reservations: reservations,
       summary: {
-        total_count: washHistory.length,
+        total_count: totalCount,
         total_sales: totalSales,
+        by_payment: byPayment,
       }
     })
+  } finally { await sql.end() }
+})
+
+// ==================== 車種サイズマスター ====================
+compat.get('/car-size', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const { model } = c.req.query()
+    if (!model || model.trim().length === 0) return c.json([])
+    const data = await sql`
+      SELECT car_model, car_size FROM carwash.car_size_master
+      WHERE car_model ILIKE ${'%' + model.trim() + '%'}
+      ORDER BY car_model
+      LIMIT 10`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+// ==================== ディーラー管理 ====================
+compat.get('/dealers', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.dealers WHERE is_active = true ORDER BY display_order, id`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.get('/dealers/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const data = await sql`SELECT * FROM carwash.dealers WHERE id = ${c.req.param('id')}`
+    if (!data[0]) return c.json({ error: 'ディーラーが見つかりません' }, 404)
+    return c.json(data[0])
+  } finally { await sql.end() }
+})
+
+compat.post('/dealers', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const presets = Array.isArray(body.service_presets) ? body.service_presets : []
+    let data: any[]
+    try {
+      data = await sql`
+        INSERT INTO carwash.dealers (name, contact_name, phone, notes, display_order, is_active, billing_type, payment_due_days, service_presets)
+        VALUES (${body.name}, ${body.contact_name ?? null}, ${body.phone ?? null},
+                ${body.notes ?? null}, ${body.display_order ?? 99}, true,
+                ${body.billing_type ?? 'per_job'}, ${body.payment_due_days ?? 30},
+                ${JSON.stringify(presets)}::text::jsonb)
+        RETURNING *`
+    } catch {
+      // service_presets column not yet added — insert without it
+      data = await sql`
+        INSERT INTO carwash.dealers (name, contact_name, phone, notes, display_order, is_active, billing_type, payment_due_days)
+        VALUES (${body.name}, ${body.contact_name ?? null}, ${body.phone ?? null},
+                ${body.notes ?? null}, ${body.display_order ?? 99}, true,
+                ${body.billing_type ?? 'per_job'}, ${body.payment_due_days ?? 30})
+        RETURNING *`
+    }
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
+})
+
+compat.put('/dealers/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const id = c.req.param('id')
+    // undefined → null に変換し、COALESCE で渡されなかったフィールドは既存値を維持
+    const name            = body.name            ?? null
+    const contactName     = body.contact_name    ?? null
+    const phone           = body.phone           ?? null
+    const notes           = body.notes           ?? null
+    const displayOrder    = body.display_order   ?? null
+    const isActive        = body.is_active       ?? null
+    const billingType     = body.billing_type    ?? null
+    const paymentDueDays  = body.payment_due_days ?? null
+    const presetsJson     = Array.isArray(body.service_presets)
+      ? JSON.stringify(body.service_presets)
+      : null  // 未送信は null → COALESCE が既存値を維持
+
+    let data: any[]
+    try {
+      data = await sql`
+        UPDATE carwash.dealers SET
+          name             = COALESCE(${name},         name),
+          contact_name     = COALESCE(${contactName},  contact_name),
+          phone            = COALESCE(${phone},        phone),
+          notes            = COALESCE(${notes},        notes),
+          display_order    = COALESCE(${displayOrder}, display_order),
+          is_active        = COALESCE(${isActive},     is_active),
+          billing_type     = COALESCE(${billingType},  billing_type),
+          payment_due_days = COALESCE(${paymentDueDays}, payment_due_days),
+          service_presets  = COALESCE(${presetsJson}::text::jsonb, service_presets)
+        WHERE id = ${id}
+        RETURNING *`
+    } catch {
+      // service_presets column not yet added — update without it
+      data = await sql`
+        UPDATE carwash.dealers SET
+          name             = COALESCE(${name},         name),
+          contact_name     = COALESCE(${contactName},  contact_name),
+          phone            = COALESCE(${phone},        phone),
+          notes            = COALESCE(${notes},        notes),
+          display_order    = COALESCE(${displayOrder}, display_order),
+          is_active        = COALESCE(${isActive},     is_active),
+          billing_type     = COALESCE(${billingType},  billing_type),
+          payment_due_days = COALESCE(${paymentDueDays}, payment_due_days)
+        WHERE id = ${id}
+        RETURNING *`
+    }
+    if (!data[0]) return c.json({ error: 'ディーラーが見つかりません' }, 404)
+    return c.json(data[0])
+  } finally { await sql.end() }
+})
+
+compat.delete('/dealers/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    await sql`UPDATE carwash.dealers SET is_active = false WHERE id = ${c.req.param('id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
+})
+
+// ==================== スタッフメンバー管理（指導員・利用者）====================
+compat.get('/staff-members', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const { role } = c.req.query()
+    const data = role
+      ? await sql`SELECT * FROM carwash.staff_members WHERE is_active = true AND role = ${role} ORDER BY id`
+      : await sql`SELECT * FROM carwash.staff_members WHERE is_active = true ORDER BY id`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.post('/staff-members', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.staff_members (name, store_id, role, is_active)
+      VALUES (${body.name}, ${body.store_id ?? 1}, ${body.role ?? 'staff'}, true)
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
+})
+
+compat.put('/staff-members/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      UPDATE carwash.staff_members SET
+        name = ${body.name}, store_id = ${body.store_id ?? 1},
+        role = ${body.role ?? 'staff'}, is_active = ${body.is_active ?? true}
+      WHERE id = ${c.req.param('id')} RETURNING *`
+    return c.json(data[0])
+  } finally { await sql.end() }
+})
+
+compat.delete('/staff-members/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    await sql`UPDATE carwash.staff_members SET is_active = false WHERE id = ${c.req.param('id')}`
+    return c.json({ ok: true })
+  } finally { await sql.end() }
+})
+
+// ==================== 来店受付チェックイン ====================
+compat.get('/vehicle-checkins', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const { vehicle_id, reservation_id } = c.req.query()
+    const data = vehicle_id
+      ? await sql`
+          SELECT vc.*, si.name AS instructor_name, sw.name AS worker_name
+          FROM carwash.vehicle_checkins vc
+          LEFT JOIN carwash.staff_members si ON si.id = vc.instructor_id
+          LEFT JOIN carwash.staff_members sw ON sw.id = vc.worker_id
+          WHERE vc.vehicle_id = ${vehicle_id}
+          ORDER BY vc.checkin_date DESC, vc.created_at DESC`
+      : reservation_id
+      ? await sql`
+          SELECT vc.*, si.name AS instructor_name, sw.name AS worker_name
+          FROM carwash.vehicle_checkins vc
+          LEFT JOIN carwash.staff_members si ON si.id = vc.instructor_id
+          LEFT JOIN carwash.staff_members sw ON sw.id = vc.worker_id
+          WHERE vc.reservation_id = ${reservation_id}`
+      : await sql`SELECT * FROM carwash.vehicle_checkins ORDER BY checkin_date DESC, created_at DESC LIMIT 100`
+    return c.json(data)
+  } finally { await sql.end() }
+})
+
+compat.post('/vehicle-checkins', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      INSERT INTO carwash.vehicle_checkins
+        (reservation_id, vehicle_id, checkin_date, mileage, prev_mileage,
+         inspection_date, oil_level, notes, instructor_id, worker_id)
+      VALUES
+        (${body.reservation_id ?? null}, ${body.vehicle_id ?? null},
+         ${body.checkin_date}, ${body.mileage ?? null}, ${body.prev_mileage ?? null},
+         ${body.inspection_date ?? null}, ${body.oil_level ?? null},
+         ${body.notes ?? null}, ${body.instructor_id ?? null}, ${body.worker_id ?? null})
+      RETURNING *`
+    return c.json(data[0], 201)
+  } finally { await sql.end() }
+})
+
+compat.put('/vehicle-checkins/:id', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const body = await c.req.json()
+    const data = await sql`
+      UPDATE carwash.vehicle_checkins SET
+        mileage = ${body.mileage ?? null},
+        prev_mileage = ${body.prev_mileage ?? null},
+        inspection_date = ${body.inspection_date ?? null},
+        oil_level = ${body.oil_level ?? null},
+        notes = ${body.notes ?? null},
+        instructor_id = ${body.instructor_id ?? null},
+        worker_id = ${body.worker_id ?? null}
+      WHERE id = ${c.req.param('id')} RETURNING *`
+    return c.json(data[0])
+  } finally { await sql.end() }
+})
+
+// ==================== 経費AI連携 ====================
+function extractItemsText(raw: unknown): string {
+  if (!raw) return ''
+  const arr: unknown[] | null = Array.isArray(raw) ? raw : (() => {
+    try { return JSON.parse(String(raw)) as unknown[] } catch { return null }
+  })()
+  if (Array.isArray(arr)) {
+    return arr.map((i) => {
+      if (typeof i === 'string') return i
+      const o = i as Record<string, unknown>
+      return String(o?.name ?? o?.description ?? o?.item ?? '')
+    }).filter(Boolean).join('、')
+  }
+  return typeof raw === 'string' ? raw : ''
+}
+
+compat.get('/expenses', async (c) => {
+  const sql = createDb(c.env)
+  try {
+    const { date, store_id } = c.req.query()
+    if (!date) return c.json({ error: 'date は必須です' }, 400)
+    await sql`SET search_path TO public`
+    const storeUuid = store_id ? EXPENSE_STORE_MAP[store_id] : null
+    const allUuids = Object.values(EXPENSE_STORE_MAP)
+    const data = storeUuid
+      ? await sql`
+          SELECT e.vendor_name, e.total, e.items, e.payment_method, e.store_id
+          FROM public.expenses e
+          WHERE (e.created_at AT TIME ZONE 'Asia/Tokyo')::date = ${date}::date
+            AND e.store_id = ${storeUuid}
+          ORDER BY e.id ASC`
+      : await sql`
+          SELECT e.vendor_name, e.total, e.items, e.payment_method, e.store_id
+          FROM public.expenses e
+          WHERE (e.created_at AT TIME ZONE 'Asia/Tokyo')::date = ${date}::date
+            AND e.store_id = ANY(${allUuids}::uuid[])
+          ORDER BY e.id ASC`
+    return c.json((data as any[]).map((e) => ({ ...e, items_text: extractItemsText(e.items) })))
+  } catch (err) {
+    console.error('[expenses] query error:', err)
+    return c.json([])
   } finally { await sql.end() }
 })
 

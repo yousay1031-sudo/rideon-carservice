@@ -7,6 +7,7 @@
     "cf-typegen": "wrangler types --env-interface CloudflareBindings"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "hono": "^4.10.7",
     "postgres": "^3.4.9"
   },
