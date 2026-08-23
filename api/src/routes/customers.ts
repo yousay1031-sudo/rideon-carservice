@@ -105,8 +105,16 @@ customers.put('/:id', async (c) => {
     return c.json(data[0])
   } catch (err) {
     console.error('[PUT /api/customers/:id]', { id, body }, err)
-    throw err
-  } finally { await sql.end() }
+    // ここで確実にJSONを返す。app.onErrorに投げっぱなしにすると、
+    // その後のsql.end()失敗などで応答が返らないまま落ちるケースがあるため。
+    const message = err instanceof Error ? err.message : String(err)
+    return c.json({ error: message }, 500)
+  } finally {
+    // 接続クローズの失敗が上のcatch/returnの結果を握りつぶさないようにする
+    try { await sql.end() } catch (endErr) {
+      console.error('[PUT /api/customers/:id] sql.end() failed', endErr)
+    }
+  }
 })
 
 customers.delete('/:id', async (c) => {
